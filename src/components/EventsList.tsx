@@ -1,5 +1,5 @@
 import { Component, createMemo, createSignal, For } from 'solid-js';
-import { store, formatTime, toggleFavoriteSwimmer, isFavoriteSwimmer } from '../services/wsClient';
+import { store, formatTime, toggleFavoriteSwimmer, isFavoriteSwimmer, getAllEvents } from '../services/wsClient';
 import type { Swimmer, AgeGroup, StrokeType, Gender, Event } from '../types';
 
 interface Props {
@@ -17,7 +17,8 @@ export const EventsList: Component<Props> = (props) => {
   const [selectedEvent, setSelectedEvent] = createSignal<Event | null>(null);
 
   const filteredEvents = createMemo(() => {
-    return store.finishedEvents.filter((event) => {
+    return getAllEvents().filter((event) => {
+      if (event.status !== 'finished') return false;
       if (selectedAgeGroup() !== '全部' && event.ageGroup !== selectedAgeGroup()) return false;
       if (selectedStroke() !== '全部' && event.stroke !== selectedStroke()) return false;
       if (selectedGender() !== '全部' && event.gender !== selectedGender()) return false;

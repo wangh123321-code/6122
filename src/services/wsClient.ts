@@ -1,5 +1,9 @@
 import { createStore, produce } from 'solid-js/store';
-import type { Event, WSMessage, RaceResult, CacheState } from '../types';
+import type { 
+  Event, WSMessage, RaceResult, CacheState, 
+  EventListItem, IncrementalSyncData, WSMessageType,
+  BatchIncrementalSyncData, ConnectionQuality
+} from '../types';
 
 const CACHE_KEY = 'swim_championship_cache';
 
@@ -13,6 +17,12 @@ export const formatTime = (seconds: number | null): string => {
     return `${mins}:${secs.padStart(5, '0')}`;
   }
   return secs;
+};
+
+export const formatDateTime = (timestamp: number | null): string => {
+  if (!timestamp) return '--';
+  const date = new Date(timestamp);
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 };
 
 export const loadCache = (): CacheState | null => {
@@ -47,28 +57,90 @@ export const clearCache = () => {
 };
 
 interface StoreState {
-  currentEvent: Event | null;
-  finishedEvents: Event[];
+  events: Map<string, Event>;
+  eventList: EventListItem[];
+  currentEventId: string | null;
   results: RaceResult[];
   connected: boolean;
   lastError: string | null;
+  subscribedEventIds: Set<string>;
+  lastSyncTimestamps: Map<string, number>;
+  connectionQuality: ConnectionQuality;
+  latency: number;
 }
 
 const initialState: StoreState = {
-  currentEvent: null,
-  finishedEvents: [],
+  events: new Map(),
+  eventList: [],
+  currentEventId: null,
   results: [],
   connected: false,
   lastError: null,
+  subscribedEventIds: new Set(),
+  lastSyncTimestamps: new Map(),
+  connectionQuality: 'offline',
+  latency: 0,
 };
 
 export const [store, setStore] = createStore<StoreState>(initialState);
 
+export const getCurrentEvent = (): Event | null => {
+  if (!store.currentEventId) return null;
+  return store.events.get(store.currentEventId) || null;
+};
+
+export const getEvent = (eventId: string): Event | null => {
+  return store.events.get(eventId) || null;
+};
+
+export const getAllEvents = (): Event[] => {
+  return Array.from(store.events.values());
+};
+
+export const getEventList = (): EventListItem[] => {
+  return store.eventList;
+};
+
+export const getConnectionQuality = (): ConnectionQuality => {
+  return store.connectionQuality;
+};
+
+export const switchEvent = (eventId: string): boolean => {
+  const event = store.events.get(eventId);
+  if (!event) return false;
+
+  if (store.currentEventId === eventId) return true;
+
+  const startTime = performance.now();
+  setStore('currentEventId', eventId);
+  const endTime = performance.now();
+
+  console.log(`[切换项目] ${event.name} 耗时: ${(endTime - startTime).toFixed(2)}ms`);
+  return true;
+};
+
 export const applyCachedData = () => {
   const cache = loadCache();
   if (cache) {
+    const eventsMap = new Map<string, Event>();
+    cache.events.forEach(event => {
+      eventsMap.set(event.id, event);
+    });
+
+    const eventList: EventListItem[] = cache.events.map(event => ({
+      id: event.id,
+      name: event.name,
+      status: event.status,
+      startTime: event.startTime,
+      stroke: event.stroke,
+      distance: event.distance,
+      ageGroup: event.ageGroup,
+      gender: event.gender,
+    }));
+
     setStore({
-      finishedEvents: cache.events.filter(e => e.status === 'finished'),
+      events: eventsMap,
+      eventList,
       results: cache.results,
     });
   }
@@ -83,28 +155,49 @@ class SwimWebSocketClient {
   private pingTimer: number | null = null;
   private pendingMessages: WSMessage[] = [];
   private url: string;
+  private messageQueue: WSMessage[] = [];
+  private processingQueue = false;
+  private lastPingSent = 0;
+  private latencyHistory: number[] = [];
+  private maxLatencyHistory = 10;
+  private connectionDroppedAt = 0;
+  private qualityCheckTimer: number | null = null;
 
   constructor(url: string) {
     this.url = url;
   }
 
   connect() {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      console.log('WebSocket 已连接，无需重复连接');
+      return;
+    }
+
     try {
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        console.log('WebSocket 连接成功');
+        console.log('WebSocket 连接成功 (单连接多路复用模式)');
         this.reconnectAttempts = 0;
         setStore('connected', true);
+        setStore('connectionQuality', 'good');
         setStore('lastError', null);
         this.flushPendingMessages();
         this.startPing();
+        this.startQualityCheck();
+
+        if (this.connectionDroppedAt > 0) {
+          this.resubscribeWithIncrementalSync();
+          this.connectionDroppedAt = 0;
+        } else {
+          this.resubscribeAll();
+        }
       };
 
       this.ws.onmessage = (event) => {
         try {
           const message: WSMessage = JSON.parse(event.data);
-          this.handleMessage(message);
+          this.queueMessage(message);
         } catch (e) {
           console.error('消息解析错误:', e);
         }
@@ -117,8 +210,11 @@ class SwimWebSocketClient {
 
       this.ws.onclose = () => {
         console.log('WebSocket 连接关闭');
+        this.connectionDroppedAt = Date.now();
         setStore('connected', false);
+        setStore('connectionQuality', 'offline');
         this.stopPing();
+        this.stopQualityCheck();
         this.scheduleReconnect();
       };
     } catch (e) {
@@ -127,19 +223,83 @@ class SwimWebSocketClient {
     }
   }
 
+  private queueMessage(message: WSMessage) {
+    this.messageQueue.push(message);
+    this.processMessageQueue();
+  }
+
+  private async processMessageQueue() {
+    if (this.processingQueue) return;
+    this.processingQueue = true;
+
+    while (this.messageQueue.length > 0) {
+      const message = this.messageQueue.shift()!;
+      const startTime = performance.now();
+      this.handleMessage(message);
+      const endTime = performance.now();
+      if (endTime - startTime > 16) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
+
+    this.processingQueue = false;
+  }
+
   private startPing() {
     this.stopPing();
     this.pingTimer = window.setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'ping' }));
+        this.lastPingSent = Date.now();
+        this.ws.send(JSON.stringify({ type: 'ping', timestamp: this.lastPingSent }));
       }
-    }, 30000);
+    }, 15000);
   }
 
   private stopPing() {
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
+    }
+  }
+
+  private startQualityCheck() {
+    this.stopQualityCheck();
+    this.qualityCheckTimer = window.setInterval(() => {
+      this.updateConnectionQuality();
+    }, 5000);
+  }
+
+  private stopQualityCheck() {
+    if (this.qualityCheckTimer) {
+      clearInterval(this.qualityCheckTimer);
+      this.qualityCheckTimer = null;
+    }
+  }
+
+  private updateConnectionQuality() {
+    const avgLatency = this.getAverageLatency();
+    setStore('latency', avgLatency);
+
+    if (!store.connected) {
+      setStore('connectionQuality', 'offline');
+    } else if (avgLatency < 100) {
+      setStore('connectionQuality', 'excellent');
+    } else if (avgLatency < 300) {
+      setStore('connectionQuality', 'good');
+    } else {
+      setStore('connectionQuality', 'poor');
+    }
+  }
+
+  private getAverageLatency(): number {
+    if (this.latencyHistory.length === 0) return 0;
+    return this.latencyHistory.reduce((a, b) => a + b, 0) / this.latencyHistory.length;
+  }
+
+  private recordLatency(ms: number) {
+    this.latencyHistory.push(ms);
+    if (this.latencyHistory.length > this.maxLatencyHistory) {
+      this.latencyHistory.shift();
     }
   }
 
@@ -162,8 +322,104 @@ class SwimWebSocketClient {
     }, delay);
   }
 
+  private resubscribeAll() {
+    const subscribedIds = Array.from(store.subscribedEventIds);
+    if (subscribedIds.length > 0) {
+      console.log(`重新订阅 ${subscribedIds.length} 个项目:`, subscribedIds);
+      this.subscribeBatch(subscribedIds);
+    }
+  }
+
+  private resubscribeWithIncrementalSync() {
+    const subscribedIds = Array.from(store.subscribedEventIds);
+    if (subscribedIds.length === 0) return;
+
+    const eventSyncTimestamps: Record<string, number> = {};
+    subscribedIds.forEach(id => {
+      const ts = store.lastSyncTimestamps.get(id);
+      if (ts) {
+        eventSyncTimestamps[id] = ts;
+      }
+    });
+
+    console.log(`[增量重连] 重新订阅 ${subscribedIds.length} 个项目，携带 per-event 同步时间戳`);
+    this.send({
+      type: 'subscribe_batch',
+      data: {
+        eventIds: subscribedIds,
+        eventSyncTimestamps,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  subscribe(eventId: string, lastSync?: number) {
+    const lastSyncTime = lastSync ?? store.lastSyncTimestamps.get(eventId) ?? 0;
+
+    setStore('subscribedEventIds', produce((set) => {
+      set.add(eventId);
+    }));
+
+    this.send({
+      type: 'subscribe',
+      eventId,
+      data: {
+        eventId,
+        lastSync: lastSyncTime,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  unsubscribe(eventId: string) {
+    setStore('subscribedEventIds', produce((set) => {
+      set.delete(eventId);
+    }));
+
+    this.send({
+      type: 'unsubscribe',
+      eventId,
+      data: { eventId },
+      timestamp: Date.now(),
+    });
+  }
+
+  subscribeBatch(eventIds: string[], lastSync?: number) {
+    const eventSyncTimestamps: Record<string, number> = {};
+    eventIds.forEach(id => {
+      const ts = store.lastSyncTimestamps.get(id);
+      if (ts) {
+        eventSyncTimestamps[id] = ts;
+      }
+    });
+
+    eventIds.forEach(id => {
+      setStore('subscribedEventIds', produce((set) => {
+        set.add(id);
+      }));
+    });
+
+    this.send({
+      type: 'subscribe_batch',
+      data: {
+        eventIds,
+        lastSync: lastSync ?? 0,
+        eventSyncTimestamps: Object.keys(eventSyncTimestamps).length > 0
+          ? eventSyncTimestamps
+          : undefined,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
   private handleMessage(message: WSMessage) {
-    switch (message.type) {
+    const type = message.type as WSMessageType;
+
+    if (message.eventId) {
+      (setStore as any)('lastSyncTimestamps', message.eventId, message.timestamp);
+    }
+
+    switch (type) {
       case 'sync':
         this.handleSync(message.data);
         break;
@@ -179,17 +435,33 @@ class SwimWebSocketClient {
       case 'event_finish':
         this.handleEventFinish(message.data);
         break;
+      case 'event_list_update':
+        this.handleEventListUpdate(message.data);
+        break;
+      case 'incremental_sync':
+        this.handleIncrementalSync(message.data);
+        break;
+      case 'batch_incremental_sync':
+        this.handleBatchIncrementalSync(message.data);
+        break;
       case 'pong':
+        this.handlePong(message);
         break;
     }
   }
 
-  private mergeEvents(localEvents: Event[], serverEvents: Event[]): Event[] {
-    const merged = [...localEvents];
+  private handlePong(message: WSMessage) {
+    if (message.timestamp && this.lastPingSent) {
+      const latency = Date.now() - this.lastPingSent;
+      this.recordLatency(latency);
+    }
+  }
+
+  private mergeEvents(localEvents: Map<string, Event>, serverEvents: Event[]): Map<string, Event> {
+    const merged = new Map(localEvents);
     serverEvents.forEach((serverEvent) => {
-      const idx = merged.findIndex((e) => e.id === serverEvent.id);
-      if (idx >= 0) {
-        const localEvent = merged[idx];
+      const localEvent = merged.get(serverEvent.id);
+      if (localEvent) {
         const mergedLanes = localEvent.lanes.map((localLane) => {
           const serverLane = serverEvent.lanes.find((l) => l.laneNumber === localLane.laneNumber);
           if (serverLane) {
@@ -205,47 +477,59 @@ class SwimWebSocketClient {
           }
           return localLane;
         });
-        merged[idx] = {
+        merged.set(serverEvent.id, {
           ...serverEvent,
           lanes: mergedLanes,
           replayMarkers: [
             ...new Set([...localEvent.replayMarkers, ...serverEvent.replayMarkers]),
           ].sort((a, b) => a - b),
-        };
+        });
       } else {
-        merged.push(serverEvent);
+        merged.set(serverEvent.id, serverEvent);
       }
     });
-    return merged.sort((a, b) => {
+    return merged;
+  }
+
+  private updateEventList(events: Event[]) {
+    const eventList: EventListItem[] = events.map(event => ({
+      id: event.id,
+      name: event.name,
+      status: event.status,
+      startTime: event.startTime,
+      stroke: event.stroke,
+      distance: event.distance,
+      ageGroup: event.ageGroup,
+      gender: event.gender,
+    })).sort((a, b) => {
       if (a.startTime && b.startTime) return a.startTime - b.startTime;
       return 0;
     });
+    setStore('eventList', eventList);
   }
 
-  private syncCurrentEventToFinished() {
-    if (!store.currentEvent) return;
-    const idx = store.finishedEvents.findIndex((e) => e.id === store.currentEvent!.id);
-    if (idx >= 0) {
-      setStore('finishedEvents', idx, { ...store.currentEvent });
+  private handleSync(data: { events: Event[]; currentEventId?: string }) {
+    if (data.events && data.events.length > 0) {
+      const merged = this.mergeEvents(store.events, data.events);
+      setStore('events', merged);
+      this.updateEventList(Array.from(merged.values()));
     }
-  }
-
-  private handleSync(data: { currentEvent: Event | null; finishedEvents: Event[] }) {
-    if (data.currentEvent) {
-      setStore('currentEvent', data.currentEvent);
+    if (data.currentEventId && !store.currentEventId) {
+      setStore('currentEventId', data.currentEventId);
     }
-    if (data.finishedEvents && data.finishedEvents.length > 0) {
-      setStore('finishedEvents', (events) => {
-        return this.mergeEvents(events, data.finishedEvents);
-      });
-    }
-    this.syncCurrentEventToFinished();
     this.saveCurrentState();
   }
 
   private handleEventStart(event: Event) {
-    setStore('currentEvent', event);
-    this.syncCurrentEventToFinished();
+    setStore('events', produce((events) => {
+      events.set(event.id, event);
+    }));
+
+    if (!store.currentEventId) {
+      setStore('currentEventId', event.id);
+    }
+
+    this.updateEventList(Array.from(store.events.values()));
     this.saveCurrentState();
   }
 
@@ -260,47 +544,37 @@ class SwimWebSocketClient {
       rank: number | null;
     }>;
   }) {
-    if (!store.currentEvent || store.currentEvent.id !== data.eventId) {
-      const finishedIdx = store.finishedEvents.findIndex(e => e.id === data.eventId);
-      if (finishedIdx >= 0) {
-        setStore(
-          'finishedEvents',
-          finishedIdx,
-          produce((event) => {
-            if (!event) return;
-            data.lanes.forEach((laneUpdate) => {
-              const lane = event.lanes.find((l) => l.laneNumber === laneUpdate.laneNumber);
-              if (lane && !lane.finished) {
-                lane.progress = laneUpdate.progress;
-                lane.currentTime = laneUpdate.currentTime;
-                lane.finished = laneUpdate.finished;
-                if (laneUpdate.finishTime) lane.finishTime = laneUpdate.finishTime;
-                if (laneUpdate.rank) lane.rank = laneUpdate.rank;
-              }
-            });
-          })
-        );
-      }
-      return;
-    }
+    const event = store.events.get(data.eventId);
+    if (!event) return;
 
-    setStore(
-      'currentEvent',
-      produce((event) => {
-        if (!event) return;
-        data.lanes.forEach((laneUpdate) => {
-          const lane = event.lanes.find((l) => l.laneNumber === laneUpdate.laneNumber);
-          if (lane) {
-            lane.progress = laneUpdate.progress;
-            lane.currentTime = laneUpdate.currentTime;
-            lane.finished = laneUpdate.finished;
-            if (laneUpdate.finishTime) lane.finishTime = laneUpdate.finishTime;
-            if (laneUpdate.rank) lane.rank = laneUpdate.rank;
-          }
-        });
-      })
-    );
-    this.syncCurrentEventToFinished();
+    (setStore as any)('events', data.eventId, produce((e: any) => {
+      if (!e) return;
+      data.lanes.forEach((laneUpdate) => {
+        const lane = e.lanes.find((l: any) => l.laneNumber === laneUpdate.laneNumber);
+        if (lane) {
+          lane.progress = laneUpdate.progress;
+          lane.currentTime = laneUpdate.currentTime;
+          lane.finished = laneUpdate.finished;
+          if (laneUpdate.finishTime) lane.finishTime = laneUpdate.finishTime;
+          if (laneUpdate.rank) lane.rank = laneUpdate.rank;
+        }
+      });
+    }));
+  }
+
+  private handleIncrementalSync(data: IncrementalSyncData) {
+    this.handleProgressUpdate(data);
+  }
+
+  private handleBatchIncrementalSync(data: BatchIncrementalSyncData) {
+    if (data.updates && Array.isArray(data.updates)) {
+      data.updates.forEach(update => {
+        this.handleProgressUpdate(update);
+        if (update.eventId) {
+          (setStore as any)('lastSyncTimestamps', update.eventId, update.lastUpdate);
+        }
+      });
+    }
   }
 
   private handleLaneFinish(data: {
@@ -312,53 +586,23 @@ class SwimWebSocketClient {
     swimmerId: string;
     swimmerName: string;
   }) {
-    const targetEvent = store.currentEvent?.id === data.eventId
-      ? store.currentEvent
-      : store.finishedEvents.find(e => e.id === data.eventId) || null;
+    const event = store.events.get(data.eventId);
+    if (!event) return;
 
-    if (!targetEvent) return;
-
-    if (store.currentEvent?.id === data.eventId) {
-      setStore(
-        'currentEvent',
-        produce((event) => {
-          if (!event) return;
-          const lane = event.lanes.find((l) => l.laneNumber === data.laneNumber);
-          if (lane) {
-            lane.finished = true;
-            lane.finishTime = data.time;
-            lane.rank = data.rank;
-            lane.splitTimes = data.splitTimes;
-            lane.progress = 100;
-          }
-          if (event.replayMarkers && !event.replayMarkers.includes(data.time)) {
-            event.replayMarkers.push(data.time);
-          }
-        })
-      );
-    }
-
-    const finishedIdx = store.finishedEvents.findIndex(e => e.id === data.eventId);
-    if (finishedIdx >= 0) {
-      setStore(
-        'finishedEvents',
-        finishedIdx,
-        produce((event) => {
-          if (!event) return;
-          const lane = event.lanes.find((l) => l.laneNumber === data.laneNumber);
-          if (lane) {
-            lane.finished = true;
-            lane.finishTime = data.time;
-            lane.rank = data.rank;
-            lane.splitTimes = data.splitTimes;
-            lane.progress = 100;
-          }
-          if (event.replayMarkers && !event.replayMarkers.includes(data.time)) {
-            event.replayMarkers.push(data.time);
-          }
-        })
-      );
-    }
+    (setStore as any)('events', data.eventId, produce((e: any) => {
+      if (!e) return;
+      const lane = e.lanes.find((l: any) => l.laneNumber === data.laneNumber);
+      if (lane) {
+        lane.finished = true;
+        lane.finishTime = data.time;
+        lane.rank = data.rank;
+        lane.splitTimes = data.splitTimes;
+        lane.progress = 100;
+      }
+      if (e.replayMarkers && !e.replayMarkers.includes(data.time)) {
+        e.replayMarkers.push(data.time);
+      }
+    }));
 
     const result: RaceResult = {
       eventId: data.eventId,
@@ -371,42 +615,40 @@ class SwimWebSocketClient {
     };
 
     setStore('results', (results) => [...results, result]);
-    this.syncCurrentEventToFinished();
     this.saveCurrentState();
-
-    notifyFavoriteSwimmers(data.swimmerId, data);
+    this.notifyFavoriteSwimmers(data.swimmerId, data);
   }
 
   private handleEventFinish(serverEvent: Event) {
-    const mergedEvent = store.currentEvent && store.currentEvent.id === serverEvent.id
-      ? { ...store.currentEvent, status: 'finished' as const }
+    const localEvent = store.events.get(serverEvent.id);
+    const mergedEvent = localEvent
+      ? { ...localEvent, status: 'finished' as const }
       : serverEvent;
 
-    setStore('finishedEvents', (events) => {
-      const idx = events.findIndex((e) => e.id === mergedEvent.id);
-      if (idx >= 0) {
-        const newEvents = [...events];
-        newEvents[idx] = mergedEvent;
-        return newEvents;
+    setStore('events', produce((events) => {
+      events.set(serverEvent.id, mergedEvent);
+    }));
+
+    this.updateEventList(Array.from(store.events.values()));
+
+    if (store.currentEventId === serverEvent.id) {
+      const ongoingEvent = Array.from(store.events.values()).find(e => e.status === 'ongoing');
+      if (ongoingEvent) {
+        setStore('currentEventId', ongoingEvent.id);
       }
-      return [...events, mergedEvent];
-    });
-    if (store.currentEvent?.id === mergedEvent.id) {
-      setStore('currentEvent', null);
     }
     this.saveCurrentState();
   }
 
+  private handleEventListUpdate(data: { events: EventListItem[] }) {
+    setStore('eventList', data.events.sort((a, b) => {
+      if (a.startTime && b.startTime) return a.startTime - b.startTime;
+      return 0;
+    }));
+  }
+
   private saveCurrentState() {
-    const allEvents = [...store.finishedEvents];
-    if (store.currentEvent) {
-      const idx = allEvents.findIndex((e) => e.id === store.currentEvent!.id);
-      if (idx >= 0) {
-        allEvents[idx] = store.currentEvent;
-      } else {
-        allEvents.push(store.currentEvent);
-      }
-    }
+    const allEvents = Array.from(store.events.values());
     saveCache({
       events: allEvents,
       results: store.results,
@@ -439,11 +681,46 @@ class SwimWebSocketClient {
       this.reconnectTimer = null;
     }
     this.stopPing();
+    this.stopQualityCheck();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
   }
+
+  private notifyFavoriteSwimmers = (swimmerId: string, data: any) => {
+    const favorites = getFavoriteSwimmers();
+    if (!favorites.includes(swimmerId)) return;
+
+    try {
+      const notified: string[] = JSON.parse(localStorage.getItem('swim_notified_results') || '[]');
+      const resultKey = `${data.eventId}-${swimmerId}`;
+
+      if (!notified.includes(resultKey)) {
+        notified.push(resultKey);
+        localStorage.setItem('swim_notified_results', JSON.stringify(notified));
+
+        if ('Notification' in window) {
+          if (Notification.permission === 'granted') {
+            new Notification(`🏊 ${data.swimmerName} 完赛！`, {
+              body: `排名第 ${data.rank} 名，成绩 ${formatTime(data.time)}`,
+              icon: '🏊',
+            });
+          } else if (Notification.permission !== 'denied') {
+            Notification.requestPermission();
+          }
+        }
+
+        window.dispatchEvent(
+          new CustomEvent('swimmer_result', {
+            detail: { swimmerId, ...data },
+          })
+        );
+      }
+    } catch (e) {
+      console.error('通知失败:', e);
+    }
+  };
 }
 
 const favoriteSwimmersKey = 'swim_favorites';
@@ -472,42 +749,6 @@ export const toggleFavoriteSwimmer = (swimmerId: string): boolean => {
 
 export const isFavoriteSwimmer = (swimmerId: string): boolean => {
   return getFavoriteSwimmers().includes(swimmerId);
-};
-
-const notifiedResultsKey = 'swim_notified_results';
-
-const notifyFavoriteSwimmers = (swimmerId: string, data: any) => {
-  const favorites = getFavoriteSwimmers();
-  if (!favorites.includes(swimmerId)) return;
-
-  try {
-    const notified: string[] = JSON.parse(localStorage.getItem(notifiedResultsKey) || '[]');
-    const resultKey = `${data.eventId}-${swimmerId}`;
-
-    if (!notified.includes(resultKey)) {
-      notified.push(resultKey);
-      localStorage.setItem(notifiedResultsKey, JSON.stringify(notified));
-
-      if ('Notification' in window) {
-        if (Notification.permission === 'granted') {
-          new Notification(`🏊 ${data.swimmerName} 完赛！`, {
-            body: `排名第 ${data.rank} 名，成绩 ${formatTime(data.time)}`,
-            icon: '🏊',
-          });
-        } else if (Notification.permission !== 'denied') {
-          Notification.requestPermission();
-        }
-      }
-
-      window.dispatchEvent(
-        new CustomEvent('swimmer_result', {
-          detail: { swimmerId, ...data },
-        })
-      );
-    }
-  } catch (e) {
-    console.error('通知失败:', e);
-  }
 };
 
 export const requestNotificationPermission = () => {

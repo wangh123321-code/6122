@@ -1667,3 +1667,810 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: #4b5563;
 }
+
+/* ==================== 赛程条 ==================== */
+.schedule-bar-container {
+  width: 100%;
+  background: linear-gradient(180deg, #0f172a 0%, #0a0e1a 100%);
+  border-radius: 16px;
+  padding: 16px 0;
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.schedule-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.schedule-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.schedule-icon {
+  font-size: 24px;
+}
+
+.schedule-bar-title > span:nth-child(2) {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.schedule-stats {
+  display: flex;
+  gap: 16px;
+  margin-left: 16px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.stat-item.ongoing .stat-dot {
+  background: var(--danger);
+  animation: pulse 1.5s infinite;
+}
+
+.stat-item.finished .stat-dot {
+  background: var(--success);
+}
+
+.stat-item.pending .stat-dot {
+  background: var(--warning);
+}
+
+.scroll-to-live-btn {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: white;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.scroll-to-live-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.schedule-bar {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 24px 16px;
+  cursor: grab;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+.schedule-bar.dragging {
+  cursor: grabbing;
+}
+
+.schedule-bar::-webkit-scrollbar {
+  height: 6px;
+}
+
+.schedule-bar::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+  border-radius: 3px;
+}
+
+.schedule-bar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.schedule-track {
+  display: flex;
+  gap: 12px;
+  min-width: max-content;
+  padding-bottom: 8px;
+}
+
+.schedule-item {
+  position: relative;
+  min-width: 220px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  overflow: hidden;
+}
+
+.schedule-item:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.2);
+}
+
+.schedule-item.active {
+  border-color: var(--primary);
+  background: linear-gradient(145deg, rgba(59, 130, 246, 0.15), var(--bg-card));
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+.schedule-item.ongoing {
+  border-color: var(--success);
+}
+
+.schedule-item.ongoing:hover {
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.25);
+}
+
+.schedule-item.finished {
+  opacity: 0.8;
+}
+
+.schedule-item.pending {
+  opacity: 0.6;
+}
+
+.schedule-item.subscribed::after {
+  content: '✓';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  background: var(--success);
+  color: white;
+  border-radius: 50%;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.schedule-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.schedule-status-icon {
+  font-size: 16px;
+}
+
+.schedule-status-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.schedule-item.ongoing .schedule-status-text {
+  color: var(--success);
+}
+
+.schedule-item-name {
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.schedule-item-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.time-icon {
+  font-size: 12px;
+}
+
+.schedule-item-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.meta-tag {
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.breathing-light {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--success), var(--accent), var(--success));
+  animation: breathing 2s ease-in-out infinite;
+}
+
+@keyframes breathing {
+  0%, 100% {
+    opacity: 0.4;
+    box-shadow: 0 0 5px var(--success);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 15px var(--success), 0 0 25px var(--success);
+  }
+}
+
+.schedule-connector {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 2px;
+  background: var(--border);
+}
+
+.schedule-scroll-hint {
+  text-align: center;
+  padding: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  animation: fadeInOut 3s ease-in-out infinite;
+}
+
+@keyframes fadeInOut {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ==================== 过渡动画 ==================== */
+.event-name-transition-out {
+  animation: fadeOut 0.15s ease-out forwards;
+}
+
+.event-name-transition-in {
+  animation: fadeSlideIn 0.25s ease-out;
+}
+
+.lanes-transition-out {
+  animation: fadeOut 0.15s ease-out forwards;
+}
+
+.lanes-transition-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.card-transition-out {
+  animation: fadeOut 0.1s ease-out forwards;
+}
+
+.card-transition-in {
+  animation: fadeSlideIn 0.2s ease-out;
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0.3; }
+}
+
+/* ==================== 连接状态增强 ==================== */
+.connection-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.connection-quality {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.quality-excellent {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.quality-good {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.quality-poor {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  animation: blink 2s infinite;
+}
+
+.quality-offline {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.subscribed-count {
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.weak-network-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(90deg, #d97706, #ea580c);
+  color: white;
+  padding: 8px 24px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 9998;
+  animation: slideDown 0.3s ease;
+}
+
+/* ==================== 移动端快速切换 ==================== */
+.mobile-event-quick-switch {
+  background: var(--bg-card);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quick-switch-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.quick-switch-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.quick-switch-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-switch-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.quick-switch-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.quick-dot {
+  font-size: 12px;
+}
+
+.quick-switch-btn.ongoing {
+  border-color: var(--success);
+}
+
+.breathing-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: breathingDot 2s ease-in-out infinite;
+}
+
+@keyframes breathingDot {
+  0%, 100% {
+    opacity: 0.3;
+    box-shadow: 0 0 2px var(--success);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 8px var(--success), 0 0 16px var(--success);
+  }
+}
+
+.mobile-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-quality-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.m-quality-excellent {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.m-quality-good {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.m-quality-poor {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  animation: blink 2s infinite;
+}
+
+.m-quality-offline {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.history-more {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* ==================== 多对比选手选择 ==================== */
+.radar-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.compare-toggle-btn {
+  padding: 8px 16px;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.compare-toggle-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+.compare-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.compare-selection {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.compare-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+
+.compare-swimmer-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.compare-swimmer-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.compare-swimmer-btn:hover:not(.disabled) {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.compare-swimmer-btn.selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--primary);
+  color: var(--text-primary);
+}
+
+.compare-swimmer-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.compare-avatar {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  color: white;
+  flex-shrink: 0;
+}
+
+.compare-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-check {
+  color: var(--success);
+  font-weight: bold;
+}
+
+.legend-badge {
+  background: var(--primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+/* ==================== 分段配速叠加对比 ==================== */
+.split-comparison-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.split-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+
+.split-comparison-chart {
+  background: var(--bg-card-hover);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.split-overlay-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.split-overlay-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 70px;
+  align-items: center;
+  gap: 10px;
+}
+
+.split-overlay-label {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-overlay-bars {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 60px;
+}
+
+.split-overlay-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 2px;
+  min-width: 0;
+}
+
+.split-overlay-bar {
+  width: 100%;
+  min-height: 6px;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.3s ease;
+}
+
+.split-overlay-val {
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.split-overlay-total {
+  font-size: 12px;
+  font-weight: bold;
+  font-family: 'Courier New', monospace;
+  text-align: right;
+}
+
+.split-distance-labels {
+  display: flex;
+  gap: 3px;
+  padding-left: 80px;
+  padding-right: 80px;
+  margin-top: 4px;
+}
+
+.split-dist-label {
+  flex: 1;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ==================== 响应式增强 ==================== */
+@media (max-width: 1280px) {
+  .schedule-bar-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .schedule-stats {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .schedule-bar-container {
+    padding: 12px 0;
+    border-radius: 12px;
+  }
+
+  .schedule-bar-header {
+    padding: 0 16px 10px;
+  }
+
+  .schedule-bar {
+    padding: 6px 16px 12px;
+  }
+
+  .schedule-item {
+    min-width: 180px;
+    padding: 12px;
+  }
+
+  .schedule-item-name {
+    font-size: 14px;
+  }
+
+  .compare-swimmer-list {
+    grid-template-columns: 1fr;
+  }
+
+  .split-overlay-row {
+    grid-template-columns: 50px 1fr 55px;
+    gap: 6px;
+  }
+
+  .split-overlay-label {
+    font-size: 10px;
+  }
+
+  .split-overlay-total {
+    font-size: 10px;
+  }
+
+  .split-distance-labels {
+    padding-left: 56px;
+    padding-right: 61px;
+  }
+}
+
+/* ==================== 性能优化与防闪烁 ==================== */
+.lane-card,
+.mobile-lane-card,
+.schedule-item {
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.progress-bar,
+.mobile-progress-fill,
+.breathing-light,
+.breathing-dot {
+  transform: translateZ(0);
+  will-change: width, opacity;
+}
+
+.lanes-container,
+.lane-card,
+.mobile-lanes {
+  contain: layout style paint;
+}
+
+.event-name,
+.time-value,
+.lane-time {
+  contain: layout style;
+}
+
+.lanes-transition-out,
+.lanes-transition-in,
+.event-name-transition-out,
+.event-name-transition-in,
+.card-transition-out,
+.card-transition-in {
+  contain: layout style paint;
+}
+

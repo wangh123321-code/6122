@@ -6,6 +6,21 @@ export type Gender = '男' | '女';
 
 export type EventStatus = 'pending' | 'ongoing' | 'finished';
 
+export type WSMessageType = 
+  | 'event_start' 
+  | 'progress_update' 
+  | 'lane_finish' 
+  | 'event_finish' 
+  | 'sync' 
+  | 'ping' 
+  | 'pong'
+  | 'subscribe'
+  | 'unsubscribe'
+  | 'subscribe_batch'
+  | 'incremental_sync'
+  | 'batch_incremental_sync'
+  | 'event_list_update';
+
 export interface Swimmer {
   id: string;
   name: string;
@@ -51,10 +66,65 @@ export interface RaceResult {
 }
 
 export interface WSMessage {
-  type: 'event_start' | 'progress_update' | 'lane_finish' | 'event_finish' | 'sync' | 'ping' | 'pong';
+  type: WSMessageType;
+  eventId?: string;
   data: any;
   timestamp: number;
 }
+
+export interface SubscribeMessage extends WSMessage {
+  type: 'subscribe';
+  data: {
+    eventId: string;
+    lastSync?: number;
+  };
+}
+
+export interface UnsubscribeMessage extends WSMessage {
+  type: 'unsubscribe';
+  data: {
+    eventId: string;
+  };
+}
+
+export interface SubscribeBatchMessage extends WSMessage {
+  type: 'subscribe_batch';
+  data: {
+    eventIds: string[];
+    lastSync?: number;
+    eventSyncTimestamps?: Record<string, number>;
+  };
+}
+
+export interface EventListItem {
+  id: string;
+  name: string;
+  status: EventStatus;
+  startTime: number | null;
+  stroke: StrokeType;
+  distance: number;
+  ageGroup: AgeGroup;
+  gender: Gender;
+}
+
+export interface IncrementalSyncData {
+  eventId: string;
+  lanes: Array<{
+    laneNumber: number;
+    progress: number;
+    currentTime: number;
+    finished: boolean;
+    finishTime: number | null;
+    rank: number | null;
+  }>;
+  lastUpdate: number;
+}
+
+export interface BatchIncrementalSyncData {
+  updates: IncrementalSyncData[];
+}
+
+export type ConnectionQuality = 'excellent' | 'good' | 'poor' | 'offline';
 
 export interface CacheState {
   events: Event[];

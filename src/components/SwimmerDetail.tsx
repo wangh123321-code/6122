@@ -1,6 +1,6 @@
-import { Component, createMemo, For } from 'solid-js';
+import { Component, createMemo, For, createSignal } from 'solid-js';
 import type { Swimmer } from '../types';
-import { store, formatTime, toggleFavoriteSwimmer, isFavoriteSwimmer } from '../services/wsClient';
+import { store, formatTime, toggleFavoriteSwimmer, isFavoriteSwimmer, getCurrentEvent, getAllEvents } from '../services/wsClient';
 import { RadarChart } from './RadarChart';
 
 interface Props {
@@ -9,27 +9,77 @@ interface Props {
 }
 
 export const SwimmerDetail: Component<Props> = (props) => {
+  const [compareSwimmerIds, setCompareSwimmerIds] = createSignal<string[]>([]);
+  const [compareMode, setCompareMode] = createSignal(false);
+
+  const allEvents = createMemo(() => getAllEvents());
+
   const swimmerEvents = createMemo(() => {
     const events: Array<{
-      event: typeof store.finishedEvents[0];
-      lane: typeof store.finishedEvents[0]['lanes'][0];
+      event: ReturnType<typeof getAllEvents>[0];
+      lane: ReturnType<typeof getAllEvents>[0]['lanes'][0];
     }> = [];
 
-    store.finishedEvents.forEach((event) => {
+    allEvents().forEach((event) => {
       const lane = event.lanes.find((l) => l.swimmerId === props.swimmer.id);
       if (lane) {
         events.push({ event, lane });
       }
     });
 
-    if (store.currentEvent) {
-      const lane = store.currentEvent.lanes.find((l) => l.swimmerId === props.swimmer.id);
-      if (lane) {
-        events.unshift({ event: store.currentEvent, lane });
+    return events.sort((a, b) => {
+      if (a.event.startTime && b.event.startTime) {
+        return b.event.startTime - a.event.startTime;
       }
-    }
+      return 0;
+    });
+  });
 
-    return events;
+  const currentEventLanes = createMemo(() => {
+    const currentEvent = getCurrentEvent();
+    if (!currentEvent) return [];
+    return currentEvent.lanes;
+  });
+
+  const availableCompareSwimmers = createMemo(() => {
+    const currentEvent = getCurrentEvent();
+    if (!currentEvent) return [];
+    
+    return currentEvent.lanes
+      .filter(lane => lane.swimmerId !== props.swimmer.id)
+      .map(lane => lane.swimmer);
+  });
+
+  const compareSwimmers = createMemo(() => {
+    return compareSwimmerIds()
+      .map(id => availableCompareSwimmers().find(s => s.id === id))
+      .filter(Boolean) as Swimmer[];
+  });
+
+  const toggleCompareSwimmer = (swimmerId: string) => {
+    const current = compareSwimmerIds();
+    if (current.includes(swimmerId)) {
+      setCompareSwimmerIds(current.filter(id => id !== swimmerId));
+    } else if (current.length < 3) {
+      setCompareSwimmerIds([...current, swimmerId]);
+    }
+  };
+
+  const currentEventSwimmerData = createMemo(() => {
+    const currentEvent = getCurrentEvent();
+    if (!currentEvent) return { mainSplits: [], compareSplits: [] };
+
+    const mainLane = currentEvent.lanes.find(l => l.swimmerId === props.swimmer.id);
+    const mainSplits = mainLane?.splitTimes || [];
+    
+    const compareSplits: number[][] = compareSwimmerIds()
+      .map(id => {
+        const lane = currentEvent.lanes.find(l => l.swimmerId === id);
+        return lane?.splitTimes || [];
+      })
+      .filter(splits => splits.length > 0);
+
+    return { mainSplits, compareSplits };
   });
 
   return (
@@ -63,7 +113,55 @@ export const SwimmerDetail: Component<Props> = (props) => {
 
         <div class="swimmer-detail-content">
           <div class="radar-section">
-            <RadarChart swimmer={props.swimmer} size={320} />
+            <div class="radar-controls">
+              <button
+                classList={{
+                  'compare-toggle-btn': true,
+                  'active': compareMode(),
+                }}
+                onClick={() => setCompareMode(!compareMode())}
+              >
+                {compareMode() ? '✕ 退出对比' : '🔄 对比模式'}
+              </button>
+              <span class="compare-hint">
+                已选 {compareSwimmerIds().length}/3 (共{1 + compareSwimmerIds().length}人对比)
+              </span>
+            </div>
+
+            <RadarChart 
+              swimmer={props.swimmer} 
+              compareSwimmers={compareSwimmers()}
+              size={320}
+              showSplitComparison={currentEventSwimmerData().mainSplits.length > 0}
+              splitTimes={currentEventSwimmerData().mainSplits}
+              compareSplitTimes={currentEventSwimmerData().compareSplits}
+            />
+
+            {compareMode() && availableCompareSwimmers().length > 0 && (
+              <div class="compare-selection">
+                <h4 class="compare-title">选择对比选手 (最多3名，共4人对比)</h4>
+                <div class="compare-swimmer-list">
+                  <For each={availableCompareSwimmers()}>
+                    {(swimmer) => (
+                      <button
+                        classList={{
+                          'compare-swimmer-btn': true,
+                          'selected': compareSwimmerIds().includes(swimmer.id),
+                          'disabled': !compareSwimmerIds().includes(swimmer.id) && compareSwimmerIds().length >= 3,
+                        }}
+                        onClick={() => toggleCompareSwimmer(swimmer.id)}
+                      >
+                        <span class="compare-avatar">{swimmer.name.charAt(0)}</span>
+                        <span class="compare-name">{swimmer.name}</span>
+                        {compareSwimmerIds().includes(swimmer.id) && (
+                          <span class="compare-check">✓</span>
+                        )}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+            )}
           </div>
 
           <div class="events-section">
