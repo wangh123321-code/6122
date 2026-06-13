@@ -126,7 +126,7 @@ const startProgressSimulation = () => {
           rankCounter++;
           lane.rank = rankCounter;
           lane.splitTimes = generateSplitTimes(currentEvent.distance, lane.finishTime);
-          currentEvent.replayMarkers.push(Date.now() - currentEvent.startTime);
+          currentEvent.replayMarkers.push((Date.now() - currentEvent.startTime) / 1000);
 
           sendToAll({
             type: 'lane_finish',

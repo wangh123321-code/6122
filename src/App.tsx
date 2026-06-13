@@ -4,10 +4,13 @@ import { BigScreenView } from './components/BigScreenView';
 import { EventsList } from './components/EventsList';
 import { SwimmerDetail } from './components/SwimmerDetail';
 import { MobileView } from './components/MobileView';
-import { wsClient, applyCachedData, store } from './services/wsClient';
+import { wsClient, applyCachedData, store, clearCache } from './services/wsClient';
 import type { Swimmer } from './types';
 
 type ViewMode = 'big-screen' | 'events-list';
+
+const CACHE_VERSION_KEY = 'swim_cache_version';
+const CURRENT_CACHE_VERSION = 2;
 
 const App: Component = () => {
   const [viewMode, setViewMode] = createSignal<ViewMode>('big-screen');
@@ -15,6 +18,15 @@ const App: Component = () => {
   const [isMobile, setIsMobile] = createSignal(false);
 
   onMount(() => {
+    try {
+      const cachedVersion = parseInt(localStorage.getItem(CACHE_VERSION_KEY) || '0', 10);
+      if (cachedVersion < CURRENT_CACHE_VERSION) {
+        clearCache();
+        localStorage.setItem(CACHE_VERSION_KEY, String(CURRENT_CACHE_VERSION));
+      }
+    } catch {
+      clearCache();
+    }
     applyCachedData();
     wsClient.connect();
 

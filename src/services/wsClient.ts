@@ -4,9 +4,11 @@ import type { Event, WSMessage, RaceResult, CacheState } from '../types';
 const CACHE_KEY = 'swim_championship_cache';
 
 export const formatTime = (seconds: number | null): string => {
-  if (seconds === null || seconds === undefined) return '--';
-  const mins = Math.floor(seconds / 60);
-  const secs = (seconds % 60).toFixed(2);
+  if (seconds === null || seconds === undefined || isNaN(seconds)) return '--';
+  if (seconds < 0) return '--';
+  const value = seconds;
+  const mins = Math.floor(value / 60);
+  const secs = (value % 60).toFixed(2);
   if (mins > 0) {
     return `${mins}:${secs.padStart(5, '0')}`;
   }
@@ -182,18 +184,68 @@ class SwimWebSocketClient {
     }
   }
 
+  private mergeEvents(localEvents: Event[], serverEvents: Event[]): Event[] {
+    const merged = [...localEvents];
+    serverEvents.forEach((serverEvent) => {
+      const idx = merged.findIndex((e) => e.id === serverEvent.id);
+      if (idx >= 0) {
+        const localEvent = merged[idx];
+        const mergedLanes = localEvent.lanes.map((localLane) => {
+          const serverLane = serverEvent.lanes.find((l) => l.laneNumber === localLane.laneNumber);
+          if (serverLane) {
+            return {
+              ...serverLane,
+              progress: serverLane.finished ? 100 : Math.max(localLane.progress, serverLane.progress),
+              currentTime: Math.max(localLane.currentTime, serverLane.currentTime),
+              finishTime: localLane.finishTime || serverLane.finishTime,
+              rank: localLane.rank || serverLane.rank,
+              splitTimes: localLane.splitTimes.length > 0 ? localLane.splitTimes : serverLane.splitTimes,
+              finished: localLane.finished || serverLane.finished,
+            };
+          }
+          return localLane;
+        });
+        merged[idx] = {
+          ...serverEvent,
+          lanes: mergedLanes,
+          replayMarkers: [
+            ...new Set([...localEvent.replayMarkers, ...serverEvent.replayMarkers]),
+          ].sort((a, b) => a - b),
+        };
+      } else {
+        merged.push(serverEvent);
+      }
+    });
+    return merged.sort((a, b) => {
+      if (a.startTime && b.startTime) return a.startTime - b.startTime;
+      return 0;
+    });
+  }
+
+  private syncCurrentEventToFinished() {
+    if (!store.currentEvent) return;
+    const idx = store.finishedEvents.findIndex((e) => e.id === store.currentEvent!.id);
+    if (idx >= 0) {
+      setStore('finishedEvents', idx, { ...store.currentEvent });
+    }
+  }
+
   private handleSync(data: { currentEvent: Event | null; finishedEvents: Event[] }) {
     if (data.currentEvent) {
       setStore('currentEvent', data.currentEvent);
     }
     if (data.finishedEvents && data.finishedEvents.length > 0) {
-      setStore('finishedEvents', data.finishedEvents);
+      setStore('finishedEvents', (events) => {
+        return this.mergeEvents(events, data.finishedEvents);
+      });
     }
+    this.syncCurrentEventToFinished();
     this.saveCurrentState();
   }
 
   private handleEventStart(event: Event) {
     setStore('currentEvent', event);
+    this.syncCurrentEventToFinished();
     this.saveCurrentState();
   }
 
@@ -208,7 +260,29 @@ class SwimWebSocketClient {
       rank: number | null;
     }>;
   }) {
-    if (!store.currentEvent || store.currentEvent.id !== data.eventId) return;
+    if (!store.currentEvent || store.currentEvent.id !== data.eventId) {
+      const finishedIdx = store.finishedEvents.findIndex(e => e.id === data.eventId);
+      if (finishedIdx >= 0) {
+        setStore(
+          'finishedEvents',
+          finishedIdx,
+          produce((event) => {
+            if (!event) return;
+            data.lanes.forEach((laneUpdate) => {
+              const lane = event.lanes.find((l) => l.laneNumber === laneUpdate.laneNumber);
+              if (lane && !lane.finished) {
+                lane.progress = laneUpdate.progress;
+                lane.currentTime = laneUpdate.currentTime;
+                lane.finished = laneUpdate.finished;
+                if (laneUpdate.finishTime) lane.finishTime = laneUpdate.finishTime;
+                if (laneUpdate.rank) lane.rank = laneUpdate.rank;
+              }
+            });
+          })
+        );
+      }
+      return;
+    }
 
     setStore(
       'currentEvent',
@@ -226,6 +300,7 @@ class SwimWebSocketClient {
         });
       })
     );
+    this.syncCurrentEventToFinished();
   }
 
   private handleLaneFinish(data: {
@@ -237,23 +312,53 @@ class SwimWebSocketClient {
     swimmerId: string;
     swimmerName: string;
   }) {
-    if (!store.currentEvent || store.currentEvent.id !== data.eventId) return;
+    const targetEvent = store.currentEvent?.id === data.eventId
+      ? store.currentEvent
+      : store.finishedEvents.find(e => e.id === data.eventId) || null;
 
-    setStore(
-      'currentEvent',
-      produce((event) => {
-        if (!event) return;
-        const lane = event.lanes.find((l) => l.laneNumber === data.laneNumber);
-        if (lane) {
-          lane.finished = true;
-          lane.finishTime = data.time;
-          lane.rank = data.rank;
-          lane.splitTimes = data.splitTimes;
-          lane.progress = 100;
-        }
-        event.replayMarkers.push(data.time);
-      })
-    );
+    if (!targetEvent) return;
+
+    if (store.currentEvent?.id === data.eventId) {
+      setStore(
+        'currentEvent',
+        produce((event) => {
+          if (!event) return;
+          const lane = event.lanes.find((l) => l.laneNumber === data.laneNumber);
+          if (lane) {
+            lane.finished = true;
+            lane.finishTime = data.time;
+            lane.rank = data.rank;
+            lane.splitTimes = data.splitTimes;
+            lane.progress = 100;
+          }
+          if (event.replayMarkers && !event.replayMarkers.includes(data.time)) {
+            event.replayMarkers.push(data.time);
+          }
+        })
+      );
+    }
+
+    const finishedIdx = store.finishedEvents.findIndex(e => e.id === data.eventId);
+    if (finishedIdx >= 0) {
+      setStore(
+        'finishedEvents',
+        finishedIdx,
+        produce((event) => {
+          if (!event) return;
+          const lane = event.lanes.find((l) => l.laneNumber === data.laneNumber);
+          if (lane) {
+            lane.finished = true;
+            lane.finishTime = data.time;
+            lane.rank = data.rank;
+            lane.splitTimes = data.splitTimes;
+            lane.progress = 100;
+          }
+          if (event.replayMarkers && !event.replayMarkers.includes(data.time)) {
+            event.replayMarkers.push(data.time);
+          }
+        })
+      );
+    }
 
     const result: RaceResult = {
       eventId: data.eventId,
@@ -266,22 +371,27 @@ class SwimWebSocketClient {
     };
 
     setStore('results', (results) => [...results, result]);
+    this.syncCurrentEventToFinished();
     this.saveCurrentState();
 
     notifyFavoriteSwimmers(data.swimmerId, data);
   }
 
-  private handleEventFinish(event: Event) {
+  private handleEventFinish(serverEvent: Event) {
+    const mergedEvent = store.currentEvent && store.currentEvent.id === serverEvent.id
+      ? { ...store.currentEvent, status: 'finished' as const }
+      : serverEvent;
+
     setStore('finishedEvents', (events) => {
-      const idx = events.findIndex((e) => e.id === event.id);
+      const idx = events.findIndex((e) => e.id === mergedEvent.id);
       if (idx >= 0) {
         const newEvents = [...events];
-        newEvents[idx] = event;
+        newEvents[idx] = mergedEvent;
         return newEvents;
       }
-      return [...events, event];
+      return [...events, mergedEvent];
     });
-    if (store.currentEvent?.id === event.id) {
+    if (store.currentEvent?.id === mergedEvent.id) {
       setStore('currentEvent', null);
     }
     this.saveCurrentState();
